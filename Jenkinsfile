@@ -4,20 +4,20 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/your/repo.git'
+                git branch: 'main', url: 'https://github.com/FNeiron/hello-app.git'
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t your-dockerhub/hello-app:latest .'
+                sh 'docker build -t neironx/hello-app:latest .'
             }
         }
 
         stage('Push Image') {
             steps {
                 sh '''
-                    docker push your-dockerhub/hello-app:latest
+                    docker push neironx/hello-app:latest
                 '''
             }
         }
