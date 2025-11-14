@@ -2,65 +2,86 @@ pipeline {
     agent any
     
     stages {
-        stage('Validate Environment') {
+        stage('Start Minikube') {
             steps {
-                bat """
-                    echo Validating environment...
-                    minikube status || echo Minikube not running
-                    minikube kubectl -- version --client || echo Minikube kubectl not available
-                """
+                script {
+                    // Проверяем статус minikube и запускаем если нужно
+                    def status = bat(
+                        script: 'minikube status',
+                        returnStdout: true,
+                        returnStatus: true
+                    )
+                    
+                    if (status != 0) {
+                        echo "Minikube is not running. Starting minikube..."
+                        bat 'minikube start --driver=docker --force'
+                    } else {
+                        echo "Minikube is already running"
+                    }
+                    
+                    // Ждем пока minikube полностью запустится
+                    bat 'minikube status --wait=true'
+                }
             }
         }
         
-        stage('Ensure Minikube Running') {
+        stage('Checkout Code') {
             steps {
-                script {
-                    def minikubeStatus = bat(
-                        script: 'minikube status',
-                        returnStdout: true
-                    ).trim()
-                    
-                    if (!minikubeStatus.contains("Running")) {
-                        echo "Starting minikube..."
-                        bat 'minikube start'
-                    }
-                }
+                checkout scm
+            }
+        }
+        
+        stage('Verify Kubernetes Access') {
+            steps {
+                bat '''
+                    echo Verifying Kubernetes cluster...
+                    minikube kubectl -- get nodes
+                    minikube kubectl -- cluster-info
+                '''
             }
         }
         
         stage('Deploy Application') {
             steps {
-                bat """
+                bat '''
                     echo Deploying hello-app...
                     minikube kubectl -- apply -f hello-app-deployment.yaml
-                """
+                '''
             }
         }
         
-        stage('Monitor Deployment') {
+        stage('Wait for Deployment') {
             steps {
-                bat """
-                    echo Monitoring deployment progress...
-                    minikube kubectl -- get pods -w --timeout=60s
-                    minikube kubectl -- get services
-                """
+                bat '''
+                    echo Waiting for pods to be ready...
+                    timeout /t 30 /nobreak
+                    minikube kubectl -- get pods -w
+                '''
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                bat '''
+                    echo Checking deployment status...
+                    minikube kubectl -- get all
+                    minikube kubectl -- logs -l app=hello-app --tail=5
+                '''
             }
         }
     }
     
     post {
         always {
-            echo '=== FINAL STATUS ==='
-            bat 'minikube kubectl -- get all'
+            echo '=== Pipeline Execution Completed ==='
+            bat 'minikube kubectl -- get pods,services,deployments 2>nul || echo Cannot get Kubernetes resources'
         }
         success {
             echo '✅ SUCCESS: Application deployed successfully!'
-            bat 'minikube service list | findstr hello'
+            bat 'minikube service list | findstr hello || echo Hello service not found'
         }
         failure {
-            echo '❌ FAILED: Deployment failed'
-            bat 'minikube kubectl -- describe deployment hello-app-deployment || echo Cannot describe deployment'
-            bat 'minikube kubectl -- get events --sort-by=.lastTimestamp || echo Cannot get events'
+            echo '❌ FAILED: Pipeline execution failed'
         }
     }
 }
