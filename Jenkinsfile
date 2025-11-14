@@ -1,77 +1,48 @@
 pipeline {
     agent any
     
-    environment {
-        DOCKER_HOST = "tcp://localhost:2375"
-    }
-    
     stages {
-        stage('Checkout') {
+        stage('Verify Environment') {
             steps {
-                bat 'git --version'
-                checkout scm
+                bat '''
+                    echo Verifying Minikube and Kubernetes...
+                    minikube status && (
+                        echo Minikube is running
+                    ) || (
+                        echo Starting Minikube...
+                        minikube start --driver=docker
+                    )
+                    minikube kubectl -- cluster-info
+                '''
             }
         }
         
-        stage('Build Docker Image') {
+        stage('Build and Deploy') {
             steps {
-                script {
-                    // Используем локальный Docker daemon
-                    docker.build("hello-app:${env.BUILD_ID}")
-                }
-            }
-        }
-        
-        stage('Load Image to Minikube') {
-            steps {
-                script {
-                    // Загружаем образ в Minikube
-                    bat "minikube image load hello-app:${env.BUILD_ID}"
-                }
-            }
-        }
-        
-        stage('Deploy to Kubernetes') {
-            steps {
-                script {
-                    // Обновляем манифест с новым тегом образа
-                    bat """
-                    powershell -Command "(Get-Content hello-app-deployment.yaml) -replace 'hello-app:latest', 'hello-app:${env.BUILD_ID}' | Set-Content hello-app-deployment.yaml"
-                    """
+                bat '''
+                    echo Building Docker image...
+                    minikube docker-env | call
+                    docker build -t hello-app:latest .
                     
-                    // Применяем манифест в Kubernetes
-                    bat "kubectl apply -f hello-app-deployment.yaml"
+                    echo Deploying to Kubernetes...
+                    minikube kubectl -- apply -f hello-app-deployment.yaml
                     
-                    // Ждем пока поды поднимутся
-                    bat "kubectl rollout status deployment/hello-app-deployment --timeout=300s"
-                }
-            }
-        }
-        
-        stage('Test Deployment') {
-            steps {
-                script {
-                    // Получаем URL сервиса через Minikube
-                    bat "minikube service hello-app-service --url"
+                    echo Waiting for deployment to be ready...
+                    minikube kubectl -- rollout status deployment/hello-app-deployment --timeout=180s
                     
-                    // Ждем немного и тестируем
-                    bat "timeout /t 10"
-                    bat "curl http://localhost:8080/health"
-                }
+                    echo Deployment successful!
+                    minikube service hello-app-service --url
+                '''
             }
         }
     }
     
     post {
         always {
-            // Очистка
-            bat "kubectl delete -f hello-app-deployment.yaml || true"
-        }
-        success {
-            echo 'Deployment completed successfully!'
-        }
-        failure {
-            echo 'Deployment failed!'
+            bat '''
+                echo Performing cleanup...
+                minikube kubectl -- delete -f hello-app-deployment.yaml 2>nul || echo "Cleanup done"
+            '''
         }
     }
 }

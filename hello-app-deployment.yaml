@@ -2,10 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hello-app-deployment
-  labels:
-    app: hello-app
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: hello-app
@@ -17,21 +15,16 @@ spec:
       containers:
       - name: hello-app
         image: hello-app:latest
-        imagePullPolicy: Never  # Используем локальный образ
+        imagePullPolicy: Never
         ports:
         - containerPort: 8080
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
 ---
 apiVersion: v1
 kind: Service
@@ -41,6 +34,6 @@ spec:
   selector:
     app: hello-app
   ports:
-  - port: 80
+  - port: 8080
     targetPort: 8080
   type: NodePort
