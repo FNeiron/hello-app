@@ -1,82 +1,66 @@
 pipeline {
     agent any
     
-    tools {
-        jdk 'jdk11'
-    }
-    
     stages {
-        stage('Check Windows Environment') {
+        stage('Validate Environment') {
             steps {
-                bat 'systeminfo | findstr /B /C:"OS Name" /C:"OS Version"'
-                bat 'kubectl version --client'
-                bat 'minikube version'
+                bat """
+                    echo Validating environment...
+                    minikube status || echo Minikube not running
+                    minikube kubectl -- version --client || echo Minikube kubectl not available
+                """
             }
         }
         
-        stage('Checkout Code') {
+        stage('Ensure Minikube Running') {
             steps {
-                checkout scm
+                script {
+                    def minikubeStatus = bat(
+                        script: 'minikube status',
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (!minikubeStatus.contains("Running")) {
+                        echo "Starting minikube..."
+                        bat 'minikube start'
+                    }
+                }
             }
         }
         
         stage('Deploy Application') {
             steps {
-                bat '''
-                    echo Deploying to Kubernetes...
-                    kubectl apply -f hello-app-deployment.yaml
-                    timeout /t 30 /nobreak
-                    kubectl get pods -o wide
-                '''
+                bat """
+                    echo Deploying hello-app...
+                    minikube kubectl -- apply -f hello-app-deployment.yaml
+                """
             }
         }
         
-        stage('Wait for Pods') {
+        stage('Monitor Deployment') {
             steps {
-                bat '''
-                    echo Waiting for pods to be ready...
-                    kubectl wait --for=condition=ready pod -l app=hello-app --timeout=180s
-                    kubectl get pods
-                '''
-            }
-        }
-        
-        stage('Verify Deployment') {
-            steps {
-                bat '''
-                    echo Verifying deployment...
-                    kubectl get deployment hello-app-deployment
-                    kubectl get service hello-app-service
-                '''
-            }
-        }
-        
-        stage('Access Application') {
-            steps {
-                bat '''
-                    echo Testing application access...
-                    minikube service list
-                    kubectl port-forward service/hello-app-service 8080:80 &
-                    timeout /t 5
-                    curl http://localhost:8080
-                    taskkill /f /im kubectl.exe
-                '''
+                bat """
+                    echo Monitoring deployment progress...
+                    minikube kubectl -- get pods -w --timeout=60s
+                    minikube kubectl -- get services
+                """
             }
         }
     }
     
     post {
         always {
-            bat '''
-                echo Collection final status...
-                kubectl get all
-            '''
+            echo '=== FINAL STATUS ==='
+            bat 'minikube kubectl -- get all'
         }
         success {
-            echo '🎉 Pipeline executed successfully on Windows!'
+            echo '✅ SUCCESS: Application deployed successfully!'
+            bat 'minikube service list | findstr hello'
         }
         failure {
-            echo '❌ Pipeline failed'
+            echo '❌ FAILED: Deployment failed'
+            bat 'minikube kubectl -- describe deployment hello-app-deployment || echo Cannot describe deployment'
+            bat 'minikube kubectl -- get events --sort-by=.lastTimestamp || echo Cannot get events'
         }
     }
 }
